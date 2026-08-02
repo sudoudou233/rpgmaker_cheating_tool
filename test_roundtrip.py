@@ -13,6 +13,7 @@ ok = fail = 0
 for root in [
     r"D:\gamess\踏勇\践踏勇者\整合\整合-1\1.12.3\Data",
     r"D:\gamess\踏勇\践踏勇者\整合\整合-1\1.12.3",
+    r"D:\gamess\JIANTATA\1-6\PC-1\ToT 1.16.2.2 CN1.0\Data",
 ]:
     for path in glob.glob(os.path.join(root, '*.rvdata2')):
         with open(path, 'rb') as f:

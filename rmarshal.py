@@ -45,31 +45,38 @@ def _fixnum_to_bytes(v):
         return bytes([v + 5])
     if -123 <= v <= -1:
         return bytes([(v - 5) & 0xFF])
-    # larger values: length-prefixed little-endian unsigned (this game's
-    # modified Marshal uses this instead of the stock 4-byte big-endian long)
     if v > 0:
+        # larger positive: length-prefixed little-endian unsigned
         nb = (v.bit_length() + 7) // 8
         b = v.to_bytes(nb, 'little')
-    else:
-        nb = (abs(v).bit_length() + 7) // 8 + 1
-        b = v.to_bytes(nb, 'little', signed=True)
-    return bytes([nb]) + b
+        return bytes([nb]) + b
+    # larger negative: signed length byte (0xFC..0xFF) + LE signed bytes
+    nb = max(1, (abs(v).bit_length() + 7) // 8)
+    if not (-(1 << (8 * nb - 1)) <= v):
+        nb += 1
+    b = v.to_bytes(nb, 'little', signed=True)
+    return bytes([0x100 - nb]) + b
 
 
 def _parse_fixnum(buf, pos):
     c = buf[pos]
     pos += 1
-    if c >= 0x80:
-        # 0x80..0xFF -> -123..4
-        return c - 0x100 + 5, pos
-    if c >= 0x05:
+    if c <= 0x04:
+        # 0x00..0x04 -> length-prefixed little-endian unsigned (n=0 -> 0)
+        n = c
+        if n == 0:
+            return 0, pos
+        return int.from_bytes(buf[pos:pos + n], 'little', signed=False), pos + n
+    if c <= 0x7F:
         # 0x05..0x7F -> 0..122
         return c - 5, pos
-    # 0x00..0x04 -> length-prefixed little-endian unsigned (n=0 -> 0)
-    n = c
-    if n == 0:
-        return 0, pos
-    return int.from_bytes(buf[pos:pos + n], 'little', signed=False), pos + n
+    if c <= 0xFA:
+        # 0x80..0xFA -> -123..-1
+        return c - 0x100 + 5, pos
+    # 0xFB..0xFF -> negative long form: length = c - 0x100 (-5..-1),
+    # value bytes follow little-endian signed
+    n = 0x100 - c
+    return int.from_bytes(buf[pos:pos + n], 'little', signed=True), pos + n
 
 
 def _fixnum_to_bytes_std(v):
@@ -162,15 +169,16 @@ class Fixnum(Node):
 
 
 class Float(Node):
-    __slots__ = ('value',)
+    __slots__ = ('value', 'tail')
 
-    def __init__(self, value):
+    def __init__(self, value, tail=b''):
         Node.__init__(self)
         self.value = value
-        self.raw = b'\x66' + _fixnum_to_bytes(len(value)) + value
+        self.tail = tail
+        self.raw = b'\x66' + _fixnum_to_bytes(len(value)) + value + tail
 
     def write_self(self):
-        return b'\x66' + _fixnum_to_bytes(len(self.value)) + self.value
+        return b'\x66' + _fixnum_to_bytes(len(self.value)) + self.value + self.tail
 
     def to_py(self):
         try:
@@ -520,7 +528,21 @@ class Parser:
         if t == FLOAT:
             n = self._fixnum()
             raw = self._bytes(n)
-            return Float(raw)
+            tail = b''
+            # This game's runtime appends "\x00" + the double's low 16 bits
+            # (big-endian) after the float string when they are non-zero.
+            if raw:
+                try:
+                    val = float(raw)
+                    bits = struct.unpack('>Q', struct.pack('>d', val))[0]
+                    low16 = struct.pack('>H', bits & 0xFFFF)
+                    if self.buf[self.pos:self.pos + 3] == b'\x00' + low16:
+                        tail = self._bytes(3)
+                except (ValueError, struct.error):
+                    pass
+            node = Float(raw, tail)
+            self._register(node)
+            return node
         if t == BIGNUM:
             sign = self._bytes(1)
             n = self._fixnum()

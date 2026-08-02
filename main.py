@@ -220,11 +220,15 @@ class App:
         if saves:
             self.save_combo['values'] = saves
             self.save_combo.current(0)
-        self._status('引擎: %s | 已读取: %d 道具, %d 武器, %d 防具, %d 角色'
-                     % (info['label'], len(self.gd.items), len(self.gd.weapons),
-                        len(self.gd.armors), len(self.gd.actors)))
-        if saves:
+            self._status('引擎: %s | 已读取: %d 道具, %d 武器, %d 防具, %d 角色'
+                         % (info['label'], len(self.gd.items), len(self.gd.weapons),
+                            len(self.gd.armors), len(self.gd.actors)))
             self._load_save()
+        else:
+            self.save_combo['values'] = []
+            self._status('引擎: %s | 游戏数据已读取 (%d 道具)。当前没有存档文件——'
+                         '请先在游戏中新开并保存一次，存档出现后再来修改。'
+                         % (info['label'], len(self.gd.items)))
 
     def _browse_save(self):
         info = self.engine_info
